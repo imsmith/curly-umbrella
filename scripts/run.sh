@@ -1,17 +1,33 @@
 #!/bin/bash
 set -e
 
-mkdir -p /app/feeds
-mkdir -p /app/logs
+mkdir -p /app/feeds /app/logs /app/cache
 
-# Index all shares and generate RSS
-while read -r path name; do
-    echo "Indexing: $name ($path)"
-    indexer.sh "$path" "$name" >> /app/logs/index-$name.log 2>&1
-done < /app/config/shares.list
+# M.E.L.T. Config
+OTEL_ENDPOINT="http://otel-collector:4318"
+HOST_ID=$(hostname)
 
-# Optional: ship logs to log server (adjust as needed)
-curl -F "file=@/app/logs/index-music.log" http://logserver.local/upload
+log() {
+  echo "[$(date -Iseconds)] $1" | tee -a /app/logs/index.log
+}
 
-# Start Caddy
+for line in $(cat /app/config/shares.list); do
+  IFS=" " read -r SHARE_PATH SHARE_NAME <<< "$line"
+  START_TIME=$(date +%s.%N)
+
+  log "Indexing $SHARE_NAME at $SHARE_PATH"
+  indexer.sh "$SHARE_PATH" "$SHARE_NAME" >> /app/logs/index-$SHARE_NAME.log 2>&1
+
+  DURATION=$(echo "$(date +%s.%N) - $START_TIME" | bc)
+  log "Done indexing $SHARE_NAME in ${DURATION}s"
+
+  # Emit metric
+  otel-cli metric --name "index_duration_seconds" \
+    --value "$DURATION" \
+    --type gauge \
+    --attributes "share=$SHARE_NAME,host=$HOST_ID" \
+    --endpoint "$OTEL_ENDPOINT"
+done
+
+# Start Caddy server
 exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
