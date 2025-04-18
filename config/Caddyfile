@@ -1,0 +1,9 @@
+:80
+
+root * /app/feeds
+file_server
+
+encode gzip
+header {
+    Cache-Control "no-cache"
+}
